@@ -1,122 +1,195 @@
 import 'package:flutter/material.dart';
+import 'dart:html' as html;
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 void main() {
-  runApp(const MyApp());
+  runApp(const ChatterboxApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class ChatterboxApp extends StatelessWidget {
+  const ChatterboxApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      title: 'Chatterbox',
+      theme: ThemeData(primarySwatch: Colors.blue),
+      home: const ChatterboxHomePage(),
+      debugShowCheckedModeBanner: false,
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class ChatterboxHomePage extends StatefulWidget {
+  const ChatterboxHomePage({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<ChatterboxHomePage> createState() => _ChatterboxHomePageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _ChatterboxHomePageState extends State<ChatterboxHomePage> {
+  bool _isRecording = false;
+  final stt.SpeechToText _speech = stt.SpeechToText();
+  String _recognizedText = '';
+  html.MediaRecorder? _mediaRecorder;
+  List<html.Blob> _audioChunks = [];
+  String? _audioUrl;
 
-  void _incrementCounter() {
+  Future<void> startRecording() async {
+    // Initialise speech recognition
+    bool available = await _speech.initialize();
+    if (available) {
+      _speech.listen(
+        onResult: (result) {
+          setState(() {
+            _recognizedText = result.recognizedWords;
+          });
+        },
+      );
+    } else {
+      debugPrint('Speech recognition unavailable');
+    }
+
+    // Request microphone access and start audio recording.
+    try {
+      final stream = await html.window.navigator.mediaDevices?.getUserMedia({
+        'audio': true,
+      });
+      if (stream != null) {
+        _audioChunks = [];
+        _mediaRecorder = html.MediaRecorder(stream);
+        _mediaRecorder!.addEventListener('dataavailable', (event) {
+          final blobEvent = event as html.BlobEvent;
+          _audioChunks.add(blobEvent.data!);
+        });
+        _mediaRecorder!.addEventListener('stop', (event) {
+          final blob = html.Blob(_audioChunks, 'audio/webm');
+          final url = html.Url.createObjectUrl(blob);
+          setState(() {
+            _audioUrl = url;
+          });
+        });
+        _mediaRecorder!.start();
+      }
+    } catch (e) {
+      debugPrint('Error starting recording: $e');
+    }
+
     setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+      _isRecording = true;
     });
+  }
+
+  Future<void> stopRecording() async {
+    // Stop speech recognition.
+    _speech.stop();
+
+    // Stop audio recording.
+    try {
+      if (_mediaRecorder != null && _mediaRecorder!.state == 'recording') {
+        _mediaRecorder!.stop();
+      }
+    } catch (e) {
+      debugPrint('Error stopping recording: $e');
+    }
+
+    setState(() {
+      _isRecording = false;
+    });
+  }
+
+  void chatterShatter() {
+    setState(() {
+      _recognizedText = '';
+      if (_audioUrl != null) {
+        html.Url.revokeObjectUrl(_audioUrl!);
+      }
+      _audioUrl = null;
+    });
+  }
+
+  void playRecording() {
+    if (_audioUrl != null) {
+      // Create an AudioElement, set autoplay and attach it to the DOM
+      final audio =
+          html.AudioElement(_audioUrl!)
+            ..autoplay = true
+            ..controls = false;
+      html.document.body?.append(audio);
+      audio.play().catchError((error) {
+        debugPrint('Error playing audio: $error');
+      });
+      // Remove the element once playback finishes
+      audio.onEnded.listen((event) {
+        audio.remove();
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
+    final size = MediaQuery.of(context).size;
     return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
+      appBar: AppBar(title: const Text('Chatterbox')),
       body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
         child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
           mainAxisAlignment: MainAxisAlignment.center,
           children: <Widget>[
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+            const Text(
+              '>',
+              style: TextStyle(fontSize: 100, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 20),
+            // Blue speech bubble with centred text.
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              padding: const EdgeInsets.all(16),
+              constraints: BoxConstraints(
+                minWidth: 200,
+                maxWidth: size.width * 0.8,
+              ),
+              decoration: BoxDecoration(
+                color: Colors.blue[300],
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                _recognizedText.isNotEmpty
+                    ? _recognizedText
+                    : (_isRecording
+                        ? 'Listening...'
+                        : 'Your words appear here'),
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 18, color: Colors.white),
+              ),
+            ),
+            const SizedBox(height: 40),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ElevatedButton(
+                  onPressed: _isRecording ? stopRecording : startRecording,
+                  child: Text(_isRecording ? 'Stop' : 'Record'),
+                ),
+                const SizedBox(width: 10),
+                // Chatter Shatter only enabled when not recording.
+                ElevatedButton(
+                  onPressed: !_isRecording ? chatterShatter : null,
+                  child: const Text('Chatter Shatter'),
+                ),
+                const SizedBox(width: 10),
+                // Play button only enabled when not recording and audio is available.
+                ElevatedButton(
+                  onPressed:
+                      (!_isRecording && _audioUrl != null)
+                          ? playRecording
+                          : null,
+                  child: const Text('Play'),
+                ),
+              ],
             ),
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
     );
   }
 }
